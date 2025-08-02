@@ -11,6 +11,7 @@
 #define MAX_COURSES 50
 #define MAX_ENROLLMENTS 200
 #define MAX_MARKS 200
+#define MAX_ATTENDANCE 500
 
 // User roles
 typedef enum {
@@ -43,16 +44,25 @@ typedef struct {
     float marks;
 } Mark;
 
+typedef struct {
+    int course_id;
+    char student_username[MAX_USERNAME];
+    char date[12]; // Format: DD-MM-YYYY
+    char status[10]; // "Present", "Absent", "Late"
+} Attendance;
+
 // Global variables
 User users[MAX_USERS];
 Course courses[MAX_COURSES];
 Enrollment enrollments[MAX_ENROLLMENTS];
 Mark marks[MAX_MARKS];
+Attendance attendance[MAX_ATTENDANCE];
 
 int user_count = 0;
 int course_count = 0;
 int enrollment_count = 0;
 int mark_count = 0;
+int attendance_count = 0;
 
 char current_user[MAX_USERNAME];
 Role current_role;
@@ -72,6 +82,8 @@ void view_courses();
 void view_materials();
 void assign_marks();
 void view_marks();
+void take_attendance();
+void view_attendance();
 void add_user();
 void change_user_role();
 void clear_screen();
@@ -189,6 +201,19 @@ void load_data() {
         }
         fclose(file);
     }
+    
+    // Load attendance
+    file = fopen("attendance.txt", "r");
+    if (file) {
+        while (fscanf(file, "%d %s %s %s", &attendance[attendance_count].course_id,
+                     attendance[attendance_count].student_username,
+                     attendance[attendance_count].date,
+                     attendance[attendance_count].status) == 4) {
+            attendance_count++;
+            if (attendance_count >= MAX_ATTENDANCE) break;
+        }
+        fclose(file);
+    }
 }
 
 void save_data() {
@@ -230,6 +255,17 @@ void save_data() {
         for (int i = 0; i < mark_count; i++) {
             fprintf(file, "%d %s %.2f\n", marks[i].course_id,
                    marks[i].student_username, marks[i].marks);
+        }
+        fclose(file);
+    }
+    
+    // Save attendance
+    file = fopen("attendance.txt", "w");
+    if (file) {
+        for (int i = 0; i < attendance_count; i++) {
+            fprintf(file, "%d %s %s %s\n", attendance[i].course_id,
+                   attendance[i].student_username, attendance[i].date,
+                   attendance[i].status);
         }
         fclose(file);
     }
@@ -292,6 +328,153 @@ void register_user() {
     pause_screen();
 }
 
+// Attendance functions
+void take_attendance() {
+    int course_id;
+    char date[12];
+    time_t now = time(0);
+    struct tm *local = localtime(&now);
+    
+    printf("=== TAKE ATTENDANCE ===\n");
+    printf("Course ID: ");
+    scanf("%d", &course_id);
+    
+    int course_index = find_course(course_id);
+    if (course_index == -1 || 
+        strcmp(courses[course_index].teacher_username, current_user) != 0) {
+        printf("You are not assigned to this course!\n");
+        pause_screen();
+        return;
+    }
+    
+    // Default to today's date, but allow teacher to change
+    sprintf(date, "%02d-%02d-%04d", local->tm_mday, local->tm_mon + 1, local->tm_year + 1900);
+    printf("Date (DD-MM-YYYY) [%s]: ", date);
+    char input_date[12];
+    scanf("%s", input_date);
+    if (strlen(input_date) > 1) {
+        strcpy(date, input_date);
+    }
+    
+    printf("\nStudents enrolled in %s:\n", courses[course_index].course_name);
+    printf("=====================================\n");
+    
+    // Show all enrolled students and take attendance
+    for (int i = 0; i < enrollment_count; i++) {
+        if (enrollments[i].course_id == course_id) {
+            char status[10];
+            int choice;
+            
+            printf("Student: %s\n", enrollments[i].student_username);
+            printf("1. Present  2. Absent  3. Late\n");
+            printf("Choice: ");
+            scanf("%d", &choice);
+            
+            switch (choice) {
+                case 1: strcpy(status, "Present"); break;
+                case 2: strcpy(status, "Absent"); break;
+                case 3: strcpy(status, "Late"); break;
+                default: strcpy(status, "Absent"); break;
+            }
+            
+            // Check if attendance already exists for this student on this date
+            int found = 0;
+            for (int j = 0; j < attendance_count; j++) {
+                if (attendance[j].course_id == course_id &&
+                    strcmp(attendance[j].student_username, enrollments[i].student_username) == 0 &&
+                    strcmp(attendance[j].date, date) == 0) {
+                    strcpy(attendance[j].status, status);
+                    found = 1;
+                    break;
+                }
+            }
+            
+            // If not found and we have space, add new attendance record
+            if (!found && attendance_count < MAX_ATTENDANCE) {
+                attendance[attendance_count].course_id = course_id;
+                strcpy(attendance[attendance_count].student_username, enrollments[i].student_username);
+                strcpy(attendance[attendance_count].date, date);
+                strcpy(attendance[attendance_count].status, status);
+                attendance_count++;
+            }
+            
+            printf("Marked as %s\n\n", status);
+        }
+    }
+    
+    save_data();
+    printf("Attendance saved successfully!\n");
+    pause_screen();
+}
+
+void view_attendance() {
+    printf("=== ATTENDANCE RECORDS ===\n");
+    
+    if (current_role == ADMIN) {
+        printf("All Attendance Records:\n");
+        printf("Course | Student | Date | Status\n");
+        printf("--------------------------------\n");
+        for (int i = 0; i < attendance_count; i++) {
+            int course_index = find_course(attendance[i].course_id);
+            printf("%-6s | %-7s | %-10s | %s\n",
+                   course_index != -1 ? courses[course_index].course_name : "Unknown",
+                   attendance[i].student_username,
+                   attendance[i].date,
+                   attendance[i].status);
+        }
+    } else if (current_role == TEACHER) {
+        int course_id;
+        printf("Enter Course ID to view attendance (0 for all my courses): ");
+        scanf("%d", &course_id);
+        
+        printf("\nAttendance for My Courses:\n");
+        printf("Course | Student | Date | Status\n");
+        printf("--------------------------------\n");
+        
+        for (int i = 0; i < attendance_count; i++) {
+            int course_index = find_course(attendance[i].course_id);
+            if (course_index != -1 &&
+                strcmp(courses[course_index].teacher_username, current_user) == 0 &&
+                (course_id == 0 || attendance[i].course_id == course_id)) {
+                printf("%-6s | %-7s | %-10s | %s\n",
+                       courses[course_index].course_name,
+                       attendance[i].student_username,
+                       attendance[i].date,
+                       attendance[i].status);
+            }
+        }
+    } else if (current_role == STUDENT) {
+        printf("My Attendance Records:\n");
+        printf("Course | Date | Status\n");
+        printf("----------------------\n");
+        
+        int total_classes = 0, present_classes = 0;
+        
+        for (int i = 0; i < attendance_count; i++) {
+            if (strcmp(attendance[i].student_username, current_user) == 0) {
+                int course_index = find_course(attendance[i].course_id);
+                printf("%-6s | %-10s | %s\n",
+                       course_index != -1 ? courses[course_index].course_name : "Unknown",
+                       attendance[i].date,
+                       attendance[i].status);
+                
+                total_classes++;
+                if (strcmp(attendance[i].status, "Present") == 0 || 
+                    strcmp(attendance[i].status, "Late") == 0) {
+                    present_classes++;
+                }
+            }
+        }
+        
+        if (total_classes > 0) {
+            float attendance_percentage = (float)present_classes / total_classes * 100;
+            printf("\nAttendance Summary:\n");
+            printf("Total Classes: %d\n", total_classes);
+            printf("Classes Attended: %d\n", present_classes);
+            printf("Attendance Percentage: %.2f%%\n", attendance_percentage);
+        }
+    }
+
 // Admin functions
 void admin_menu() {
     int choice;
@@ -308,7 +491,8 @@ void admin_menu() {
         printf("6. View All Courses\n");
         printf("7. View Course Materials\n");
         printf("8. View All Marks\n");
-        printf("9. Logout\n");
+        printf("9. View All Attendance\n");
+        printf("10. Logout\n");
         printf("Enter choice: ");
         
         scanf("%d", &choice);
@@ -322,7 +506,8 @@ void admin_menu() {
             case 6: view_courses(); break;
             case 7: view_materials(); break;
             case 8: view_marks(); break;
-            case 9: return;
+            case 9: view_attendance(); break;
+            case 10: return;
             default: printf("Invalid choice!\n"); pause_screen(); break;
         }
     }
@@ -475,7 +660,9 @@ void teacher_menu() {
         printf("3. View Course Materials\n");
         printf("4. Assign Marks\n");
         printf("5. View Student Marks\n");
-        printf("6. Logout\n");
+        printf("6. Take Attendance\n");
+        printf("7. View Attendance\n");
+        printf("8. Logout\n");
         printf("Enter choice: ");
         
         scanf("%d", &choice);
@@ -486,7 +673,9 @@ void teacher_menu() {
             case 3: view_materials(); break;
             case 4: assign_marks(); break;
             case 5: view_marks(); break;
-            case 6: return;
+            case 6: take_attendance(); break;
+            case 7: view_attendance(); break;
+            case 8: return;
             default: printf("Invalid choice!\n"); pause_screen(); break;
         }
     }
@@ -605,7 +794,8 @@ void student_menu() {
         printf("1. View My Courses\n");
         printf("2. View Course Materials\n");
         printf("3. View My Marks\n");
-        printf("4. Logout\n");
+        printf("4. View My Attendance\n");
+        printf("5. Logout\n");
         printf("Enter choice: ");
         
         scanf("%d", &choice);
@@ -614,7 +804,8 @@ void student_menu() {
             case 1: view_courses(); break;
             case 2: view_materials(); break;
             case 3: view_marks(); break;
-            case 4: return;
+            case 4: view_attendance(); break;
+            case 5: return;
             default: printf("Invalid choice!\n"); pause_screen(); break;
         }
     }
